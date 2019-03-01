@@ -42,9 +42,24 @@ if rank==master:
     nlayers=options.nlayers
     vacuum=options.vacuum
     outdir=options.outdir
-    files =list(iglob(options.files))
+    files=list(iglob(options.files))
 
-    os.system("mkdir -p " + outdir)
+    if os.path.exists(outdir):
+        for i, name in enumerate(files):
+            outdir_cur = outdir + "/" + "/".join(name.split("/")[-2:])
+            outdir_cur = outdir_cur[:outdir_cur.rindex(".")]
+            if os.path.exists(outdir_cur + '/out.txt'):
+                with open(outdir_cur + '/out.txt','r') as f:
+                    lines = f.readlines()
+                if len(lines) > 0 and 'DONE' in lines[-1]:
+                    if int(lines[-1].split()[1]) >= miller_bounds:
+                        print("Slabs with greater or equal millers bounds have been calculated for file %s in %s"%(name, outdir_cur))
+                        del files[i]
+                    else:
+                        with open(outdir_cur + '/out.txt','w') as f:
+                            f.write(lines[:-1])
+    else:
+        os.system("mkdir -p " + outdir)
 
     print("Slabs will be cut for the following %d structures:"%len(files))
     for f in files:
@@ -75,7 +90,7 @@ for f in load_balance(len(files)):
     print("%s on core %d: STARTING"%(files[f], rank))
     stdout.flush()
 
-    bulk = icsd_cif_a(files[f])
+    bulk = icsd_cif_a(files[f], make_primitive = True)
     
     space_group = bulk.group
     
@@ -143,12 +158,22 @@ for f in load_balance(len(files)):
 
     outdir_cur = outdir + "/" + "/".join(files[f].split("/")[-2:])
     outdir_cur = outdir_cur[:outdir_cur.rindex(".")]
-    
-    os.system("mkdir -p " + outdir_cur)
 
-    file=open(outdir_cur + '/out.txt','w')
-    
-    # print("%s surface orienttions to go!" %(len(trials)))
+    if os.path.exists(outdir_cur + '/out.txt'):
+        with open(outdir_cur + '/out.txt','r') as f:
+            outlines = f.readlines()
+        miller_done = [array([int(ind) for ind in line.split()[:3]]) for line in outlines]
+        
+        for m, miller in enumerate(trials):
+            for l, md in enumerate(miller_done):
+                if all(miller==md):
+                    del miller_done[l]
+                    del trials[m]
+                    break
+    else:    
+        os.system("mkdir -p " + outdir_cur)
+
+    file=open(outdir_cur + '/out.txt','a')
     
     for miller in trials:
     
@@ -169,6 +194,8 @@ for f in load_balance(len(files)):
         
         file.write('% 2i  % 2i  % 2i    broken_bonds %2.4f %2.4f polar=%s\n' %(miller[0],miller[1],miller[2],count_broken_bonds(bulk=bulk,slab=slab),count_broken_bonds_per_area(bulk=bulk,slab=slab),is_polar(slab=slab,charge=charge)))
         file.flush()
+    file.write('DONE %d'%(miller_bounds))
+    file.flush()
     file.close()
 
     print("%s on core %d: DONE"%(files[f], rank))
