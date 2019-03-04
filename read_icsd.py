@@ -132,7 +132,7 @@ def icsd_cif_a(filename, make_primitive=True):
     # [['Mo1', ['0.3333', '0.6667', '0.25'], '1.'], ['S1', ['0.3333', '0.6667', '0.621(4)'], '1.']]
 
     ##FT: reading the proper oxidation states
-    oxidation = [[x.split()[0], int(x.split()[1])] for x in lines[sym_end+2:ox_end-1]]
+    oxidation = [[x.split()[0], int(round(float(x.split()[1]),0))] for x in lines[sym_end+2:ox_end-1]]
 
     # Setting up a good wyckoff list
 

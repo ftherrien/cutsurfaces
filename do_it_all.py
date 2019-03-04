@@ -3,11 +3,13 @@ from read_icsd import icsd_cif_a
 from pylada.crystal import write, supercell
 from numpy import array,sum, diag, arange, transpose, float64
 from numpy.linalg import inv
+import re
 import os
 import pickle
 from glob import iglob
 from mpi4py import MPI
 import argparse
+from copy import deepcopy
 from sys import version_info, stdout
 
 
@@ -45,22 +47,33 @@ if rank==master:
     files=list(iglob(options.files))
 
     if os.path.exists(outdir):
+        unfinished_files = []
         for i, name in enumerate(files):
             outdir_cur = outdir + "/" + "/".join(name.split("/")[-2:])
             outdir_cur = outdir_cur[:outdir_cur.rindex(".")]
             if os.path.exists(outdir_cur + '/out.txt'):
                 with open(outdir_cur + '/out.txt','r') as f:
                     lines = f.readlines()
+                lines = [line for line in lines if line.strip(' \n')] #remove empty lines
                 if len(lines) > 0 and 'DONE' in lines[-1]:
                     if int(lines[-1].split()[1]) >= miller_bounds:
                         print("Slabs with greater or equal millers bounds have been calculated for file %s in %s"%(name, outdir_cur))
-                        del files[i]
+                        continue
                     else:
                         with open(outdir_cur + '/out.txt','w') as f:
-                            f.write(lines[:-1])
+                            f.write(''.join(lines[:-1]))
+                elif len(lines) > 0 and 'FAILED' in lines[-1]:
+                    print("Calculations for file %s in %s had previously failed and will not be retried"%(name, outdir_cur))
+                    continue
+                else:
+                    with open(outdir_cur + '/out.txt','w') as f:
+                        f.write(''.join(lines))
+            unfinished_files.append(name)
+        files = deepcopy(unfinished_files)
     else:
         os.system("mkdir -p " + outdir)
 
+        
     print("Slabs will be cut for the following %d structures:"%len(files))
     for f in files:
         print(f)
@@ -160,27 +173,36 @@ for f in load_balance(len(files)):
     outdir_cur = outdir_cur[:outdir_cur.rindex(".")]
 
     if os.path.exists(outdir_cur + '/out.txt'):
-        with open(outdir_cur + '/out.txt','r') as f:
-            outlines = f.readlines()
+        with open(outdir_cur + '/out.txt','r') as fid:
+            outlines = fid.readlines()
+            
         miller_done = [array([int(ind) for ind in line.split()[:3]]) for line in outlines]
         
+        unfinished_trials = []
         for m, miller in enumerate(trials):
             for l, md in enumerate(miller_done):
                 if all(miller==md):
                     del miller_done[l]
-                    del trials[m]
                     break
+            else:
+                unfinished_trials.append(miller)
+        trials = deepcopy(unfinished_trials)
     else:    
         os.system("mkdir -p " + outdir_cur)
 
     file=open(outdir_cur + '/out.txt','a')
-    
+
     for miller in trials:
     
         slab=make_surface(structure=bulk,miller=miller,nlayers=nlayers,vacuum=vacuum,acc=10)
         # print("Done with the supercell")
-        
-        slab = minimize_broken_bonds(bulk=bulk,slab=slab,vacuum=vacuum,charge=charge,minimize_total=True)
+        try:
+            slab = minimize_broken_bonds(bulk=bulk,slab=slab,vacuum=vacuum,charge=charge,minimize_total=True)
+
+        except AssertionError:
+            print("Charges do not sum up to zero for %s, the charges are:"%(files[f]), charge)
+            print("Going to the next structure.")
+            break
         # print("Done with the supercell construction, now shaping it")
         
         cell=transpose(slab.cell)
@@ -194,11 +216,18 @@ for f in load_balance(len(files)):
         
         file.write('% 2i  % 2i  % 2i    broken_bonds %2.4f %2.4f polar=%s\n' %(miller[0],miller[1],miller[2],count_broken_bonds(bulk=bulk,slab=slab),count_broken_bonds_per_area(bulk=bulk,slab=slab),is_polar(slab=slab,charge=charge)))
         file.flush()
-    file.write('DONE %d'%(miller_bounds))
+
+    else:
+        file.write('DONE %d\n'%(miller_bounds))
+        file.flush()
+        file.close()
+        print("%s on core %d: DONE"%(files[f], rank))
+        continue
+
+    file.write('FAILED\n')
     file.flush()
     file.close()
-
-    print("%s on core %d: DONE"%(files[f], rank))
+    print("%s on core %d: FAILED"%(files[f], rank))
 
 #############################################
 
