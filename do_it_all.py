@@ -103,7 +103,7 @@ for f in load_balance(len(files)):
     print("%s on core %d: STARTING"%(files[f], rank))
     stdout.flush()
 
-    bulk = icsd_cif_a(files[f], make_primitive = True)
+    bulk = icsd_cif_a(files[f], make_primitive = False)
     
     space_group = bulk.group
     
